@@ -63,5 +63,18 @@ func GetBook(c *gin.Context) {
 
 // Update a book
 func UpdateBook(c *gin.Context) {
+	var book Book
+	if err := DB.First(&book, c.Param("id")).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
+		return
+	}
 
+	//bind the request body
+	if err := c.ShouldBindJSON(&book); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid input", nil)
+		return
+	}
+
+	DB.Save(&book)
+	ResponseJSON(c, http.StatusOK, "Book updated successfully", book)
 }
