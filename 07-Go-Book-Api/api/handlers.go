@@ -43,3 +43,10 @@ func CreateBook(c *gin.Context) {
 	DB.Create(&book)
 	ResponseJSON(c, http.StatusCreated, "Book created sucessfully", book)
 }
+
+// getting list of books
+func GetBooks(c *gin.Context) {
+	var books []Book
+	DB.Find(&books)
+	ResponseJSON(c, http.StatusOK, "Books retrieved successfully", books)
+}
