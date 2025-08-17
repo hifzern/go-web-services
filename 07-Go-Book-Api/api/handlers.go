@@ -50,3 +50,13 @@ func GetBooks(c *gin.Context) {
 	DB.Find(&books)
 	ResponseJSON(c, http.StatusOK, "Books retrieved successfully", books)
 }
+
+// get a single book
+func GetBook(c *gin.Context) {
+	var book Book
+	if err := DB.First(&book, c.Param("id")).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Book Not Found", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Book retrieved succesfully", book)
+}
