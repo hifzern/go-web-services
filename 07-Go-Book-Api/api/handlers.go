@@ -78,3 +78,13 @@ func UpdateBook(c *gin.Context) {
 	DB.Save(&book)
 	ResponseJSON(c, http.StatusOK, "Book updated successfully", book)
 }
+
+// delete a book
+func DeleteBook(c *gin.Context) {
+	var book Book
+	if err := DB.Delete(&book, c.Param("id")).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Book deleted successfully", nil)
+}
