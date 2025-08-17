@@ -41,4 +41,34 @@ func TestCreateBook(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
+	if status := w.Code; status != http.StatusCreated {
+		t.Errorf("Expected status %d you got %d", http.StatusCreated, status)
+	}
+	var response api.JsonResponse
+	json.NewDecoder(w.Body).Decode(&response)
+
+	if response.Data == nil {
+		t.Errorf("Expected book data, got nil")
+	}
+}
+
+func TestGetBooks(t *testing.T) {
+	setupTestDB()
+	addBook()
+	router := gin.Default()
+	router.GET("/books", api.GetBooks)
+
+	req, _ := http.NewRequest("GET", "/books", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("Expected sttaus %d you got %d", http.StatusOK, status)
+	}
+	var response api.JsonResponse
+	json.NewDecoder(w.Body).Decode(&response)
+
+	if len(response.Data.([]interface{})) == 0 {
+		t.Errorf("Expected non-empty books list")
+	}
 }
