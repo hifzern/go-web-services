@@ -60,3 +60,8 @@ func GetBook(c *gin.Context) {
 	}
 	ResponseJSON(c, http.StatusOK, "Book retrieved succesfully", book)
 }
+
+// Update a book
+func UpdateBook(c *gin.Context) {
+
+}
