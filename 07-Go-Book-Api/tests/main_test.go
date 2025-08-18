@@ -12,7 +12,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"github.com/golang-jwt/jwt/v5"
 )
+
+var jwtSecret = []byte(os.Getenv("SECRET_TOKEN"))
 
 func setupTestDB() {
 	var err error
