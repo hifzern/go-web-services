@@ -18,7 +18,9 @@ import (
 			}
 
 			//parse and validate the token
-			_, err := jwt.Parse(tokenString)
+			_, err := jwt.Parse(tokenString, func(token *jwt.Token)(interface{}, error) {
+
+			})
 		}
 	}
 )
