@@ -32,6 +32,39 @@ func addBook() api.Book {
 	return book
 }
 
+func generateValidToken() {
+	expirationTime := time.Now().Add(15 * time.Minute)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"exp": expirationTime.Unix()
+	})
+	tokenString, _ := token.SignedString(jwtSecret)
+	return tokenString
+}
+
+func TestGenerateJWT(t *testing.T) {
+	router := gin.Default()
+	router.POST("/token", api.GenerateJWT)
+
+	loginRequest := map[string]string{
+		"username":"admin",
+		"password":"Password",
+	}
+	jsonValue, _ := json.Marshal(loginRequest)
+	req, _ := http.NewRequest("POST", "/token", bytes.NewBuffer(jsonValue))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if status := w.Code; status != http.StatusOK {
+		t.Errorf("Expected status %d, got %d", http.StatusOK, status)
+	}
+	var response api.JsonResponse
+	json.NewDecoder(w.Body).Decode(&response)
+
+	if response.Data == nil || response.Data.(map[string]interface{})["token"] == "" {
+		t.Errorf("Expected token in response, got nil or empty")
+	}
+}
+
 func TestCreateBook(t *testing.T) {
 	setupTestDB()
 	router := gin.Default()
