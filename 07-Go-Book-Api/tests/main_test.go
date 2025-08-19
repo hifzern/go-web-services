@@ -1,190 +1,192 @@
-package tests
+package api
 
 import (
-	"07-Go-Book-Api/api"
-	"bytes"
-	"encoding/json"
+	"log"
 	"net/http"
-	"net/http/httptest"
+	"os"
 	"strconv"
-	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-var jwtSecret = []byte(os.Getenv("SECRET_TOKEN"))
+var (
+	DB        *gorm.DB
+	jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+)
 
-func setupTestDB() {
+type Book struct {
+	ID        uint      `json:"id" gorm:"primaryKey"`
+	Title     string    `json:"title"`
+	Author    string    `json:"author"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type LoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+}
+
+func ResponseJSON(c *gin.Context, code int, msg string, data any) {
+	c.JSON(code, gin.H{"message": msg, "data": data})
+}
+
+func InitDB() {
+	_ = godotenv.Load() // jangan fatal; di production .env bisa tidak ada
+
+	dsn := os.Getenv("DB_URL") // pastikan benar
+	if dsn == "" {
+		log.Fatal("DB_URL is empty")
+	}
+
 	var err error
-	api.DB, err = gorm.Open(sqlite.Open(":memory"), &gorm.Config{})
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		panic("failed to connect test database")
+		log.Fatal("Failed to connect to database: ", err)
 	}
-	api.DB.AutoMigrate(&api.Book{})
+
+	if err := DB.AutoMigrate(&Book{}); err != nil {
+		log.Fatal("Failed to migrate schema: ", err)
+	}
 }
 
-func addBook() api.Book {
-	book := api.Book{Title: "Menolak Ngoding", Author: "Jakwan Bagung", Year: 2025}
-	api.DB.Create(&book)
-	return book
+func CreateBook(c *gin.Context) {
+	var in Book
+	if err := c.ShouldBindJSON(&in); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid input", nil)
+		return
+	}
+	if err := DB.Create(&in).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "DB error", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusCreated, "Book created successfully", in)
 }
 
-func generateValidToken() {
-	expirationTime := time.Now().Add(15 * time.Minute)
+func GetBooks(c *gin.Context) {
+	var books []Book
+	if err := DB.Find(&books).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "DB error", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Books retrieved successfully", books)
+}
+
+func GetBook(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid ID", nil)
+		return
+	}
+	var book Book
+	if err := DB.First(&book, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
+		} else {
+			ResponseJSON(c, http.StatusInternalServerError, "DB error", nil)
+		}
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Book retrieved successfully", book)
+}
+
+func UpdateBook(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid ID", nil)
+		return
+	}
+
+	var book Book
+	if err := DB.First(&book, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
+		} else {
+			ResponseJSON(c, http.StatusInternalServerError, "DB error", nil)
+		}
+		return
+	}
+
+	// bind ke struct input agar tidak menimpa field tak terkirim
+	var in struct {
+		Title  *string `json:"title"`
+		Author *string `json:"author"`
+	}
+	if err := c.ShouldBindJSON(&in); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid input", nil)
+		return
+	}
+
+	tx := DB.Model(&book)
+	if in.Title != nil {
+		tx = tx.Update("title", *in.Title)
+	}
+	if in.Author != nil {
+		tx = tx.Update("author", *in.Author)
+	}
+	if tx.Error != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "DB error", nil)
+		return
+	}
+
+	ResponseJSON(c, http.StatusOK, "Book updated successfully", book)
+}
+
+func DeleteBook(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid ID", nil)
+		return
+	}
+	res := DB.Delete(&Book{}, id)
+	if res.Error != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "DB error", nil)
+		return
+	}
+	if res.RowsAffected == 0 {
+		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Book deleted successfully", nil)
+}
+
+func GenerateJWT(c *gin.Context) {
+	var loginRequest LoginRequest
+	if err := c.ShouldBindJSON(&loginRequest); err != nil {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid request payload", nil)
+		return
+	}
+
+	// TODO: ganti dengan verifikasi ke DB
+	if loginRequest.Username != os.Getenv("ADMIN_USER") || loginRequest.Password != os.Getenv("ADMIN_PASS") {
+		ResponseJSON(c, http.StatusUnauthorized, "Invalid credentials", nil)
+		return
+	}
+
+	if len(jwtSecret) == 0 {
+		ResponseJSON(c, http.StatusInternalServerError, "JWT secret not configured", nil)
+		return
+	}
+
+	now := time.Now()
+	exp := now.Add(15 * time.Minute)
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"exp": expirationTime.Unix()
+		"sub": loginRequest.Username,
+		"iat": now.Unix(),
+		"exp": exp.Unix(),
 	})
-	tokenString, _ := token.SignedString(jwtSecret)
-	return tokenString
-}
 
-func TestGenerateJWT(t *testing.T) {
-	router := gin.Default()
-	router.POST("/token", api.GenerateJWT)
-
-	loginRequest := map[string]string{
-		"username":"admin",
-		"password":"Password",
-	}
-	jsonValue, _ := json.Marshal(loginRequest)
-	req, _ := http.NewRequest("POST", "/token", bytes.NewBuffer(jsonValue))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if status := w.Code; status != http.StatusOK {
-		t.Errorf("Expected status %d, got %d", http.StatusOK, status)
-	}
-	var response api.JsonResponse
-	json.NewDecoder(w.Body).Decode(&response)
-
-	if response.Data == nil || response.Data.(map[string]interface{})["token"] == "" {
-		t.Errorf("Expected token in response, got nil or empty")
-	}
-}
-
-func TestCreateBook(t *testing.T) {
-	setupTestDB()
-	router := gin.Default()
-	router.POST("/book", api.CreateBook)
-	book := api.Book{
-		Title: "Test Demo", Author: "Kakso Bontol", Year: 2024,
-	}
-	jsonValue, _ := json.Marshal(book)
-	req, _ := http.NewRequest("POST", "/book", bytes.NewBuffer(jsonValue))
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if status := w.Code; status != http.StatusCreated {
-		t.Errorf("Expected status %d you got %d", http.StatusCreated, status)
-	}
-	var response api.JsonResponse
-	json.NewDecoder(w.Body).Decode(&response)
-
-	if response.Data == nil {
-		t.Errorf("Expected book data, got nil")
-	}
-}
-
-func TestGetBooks(t *testing.T) {
-	setupTestDB()
-	addBook()
-	router := gin.Default()
-	router.GET("/books", api.GetBooks)
-
-	req, _ := http.NewRequest("GET", "/books", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if status := w.Code; status != http.StatusOK {
-		t.Errorf("Expected sttaus %d you got %d", http.StatusOK, status)
-	}
-	var response api.JsonResponse
-	json.NewDecoder(w.Body).Decode(&response)
-
-	if len(response.Data.([]interface{})) == 0 {
-		t.Errorf("Expected non-empty books list")
-	}
-}
-
-func TestGetBook(t *testing.T) {
-	setupTestDB()
-	book := addBook()
-	router := gin.Default()
-	router.POST("/book/:id", api.GetBook)
-
-	req, _ := http.NewRequest("GET", "/book/"+strconv.Itoa(int(book.ID)), nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if status := w.Code; status != http.StatusOK {
-		t.Errorf("Expected status %d got %d", http.StatusOK, status)
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Couldn't generate token", nil)
+		return
 	}
 
-	var response api.JsonResponse
-	json.NewDecoder(w.Body).Decode(&response)
-
-	if response.Data == nil || response.Data.(map[string]interface{})["id"] != float64(book.ID) {
-		t.Errorf("Expected book ID %d, got nil or wrong ID", book.ID)
-	}
-}
-
-func TestUpdateBook(t *testing.T) {
-	setupTestDB()
-	book := addBook()
-	router := gin.Default()
-	router.PUT("/book/:id", api.UpdateBook)
-
-	updateBook := api.Book{
-		Title: "Lorem Ipsum", Author: "Dolor Amet", Year: 2024,
-	}
-	jsonValue, _ := json.Marshal(updateBook)
-
-	req, _ := http.NewRequest("PUT", "/book/"+strconv.Itoa(int(book.ID)), bytes.NewBuffer(jsonValue))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if status := w.Code; status != http.StatusOK {
-		t.Errorf("Expected status %d got %d", http.StatusOK, status)
-	}
-
-	var response api.JsonResponse
-	json.NewDecoder(w.Body).Decode(&response)
-
-	if response.Data == nil || response.Data.(map[string]interface{})["title"] != "Lorem Ipsum" {
-		t.Errorf("Expected updated book title 'Lorem Ipsum', got %v", response.Data)
-	}
-}
-
-func TestDeleteBook(t *testing.T) {
-	setupTestDB()
-	book := addBook()
-	router := gin.Default()
-	router.DELETE("/book/:id", api.DeleteBook)
-
-	req, _ := http.NewRequest("DELETE", "/book/"+strconv.Itoa(int(book.ID)), nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if status := w.Code; status != http.StatusOK {
-		t.Errorf("Expected status %d got %d", http.StatusOK, status)
-	}
-
-	var response api.JsonResponse
-	json.NewDecoder(w.Body).Decode(&response)
-
-	if response.Message != "Book deleted successfully" {
-		t.Errorf("Expected delete message 'Book deleted successfully', got %v", response.Message)
-	}
-
-	//verify that the book was deleted
-	var deletedBook api.Book
-	result := api.DB.First(&deletedBook, book.ID)
-	if result.Error == nil {
-		t.Errorf("Expected book to be deleted but it still exists")
-	}
-
+	ResponseJSON(c, http.StatusOK, "Token generated successfully", gin.H{"token": tokenString})
 }

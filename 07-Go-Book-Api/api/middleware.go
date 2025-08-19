@@ -1,13 +1,24 @@
 package api
+
 import (
+	"errors"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"net/http"
 	"os"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 var jwtSecret = []byte(os.Getenv("SECRET_TOKEN"))
+
+func getJWTSecret() ([]byte, error) {
+	secret := os.Getenv("SECRET_TOKEN")
+	if secret == "" {
+		return nil, errors.New("SECRET_TOKEN is empty")
+	}
+	return []byte(secret), nil
+}
 
 func JWTAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -19,7 +30,7 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		}
 
 		//parse and validate the token
-		_, err := jwt.Parse(tokenString, func(token *jwt.Token)(interface{}, error) {
+		_, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			//validate the signing method
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method : %v", token.Header["alg"])
