@@ -26,14 +26,19 @@ func InitDB() {
 		log.Fatal("Failed to connect to database : ", err)
 	}
 
-	if err != nil {
-		log.Fatal("Failed to connect to database : ", err)
-	}
-
 	//migrate the schema
 	if err := DB.AutoMigrate(&Book{}); err != nil {
 		log.Fatal("Failed to migrate schema : ", err)
 	}
+
+	if err := DB.AutoMigrate(&Book{}); err != nil {
+		log.Fatal("Failed to migrate schema : ", err)
+	}
+}
+
+type LoginRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
 }
 
 func CreateBook(c *gin.Context) {
@@ -45,14 +50,25 @@ func CreateBook(c *gin.Context) {
 		return
 	}
 
-	DB.Create(&book)
+	if book.Title == "" || book.Author == "" || book.Year == 0 {
+		ResponseJSON(c, http.StatusBadRequest, "Title, Author, and Year required", nil)
+		return
+	}
+
+	if err := DB.Create(&book).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to create book", nil)
+		return
+	}
 	ResponseJSON(c, http.StatusCreated, "Book created sucessfully", book)
 }
 
 // getting list of books
 func GetBooks(c *gin.Context) {
 	var books []Book
-	DB.Find(&books)
+	if err := DB.Find(&books).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to detch books", nil)
+		return
+	}
 	ResponseJSON(c, http.StatusOK, "Books retrieved successfully", books)
 }
 
