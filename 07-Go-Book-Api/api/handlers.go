@@ -42,24 +42,24 @@ type LoginRequest struct {
 }
 
 func CreateBook(c *gin.Context) {
-	var book Book
+	var payload Book
 
 	//bind the request body
-	if err := c.ShouldBindJSON(&book); err != nil {
+	if err := c.ShouldBindJSON(&payload); err != nil {
 		ResponseJSON(c, http.StatusBadRequest, "Invalid Input", nil)
 		return
 	}
 
-	if book.Title == "" || book.Author == "" || book.Year == 0 {
+	if payload.Title == "" || payload.Author == "" || payload.Year == 0 {
 		ResponseJSON(c, http.StatusBadRequest, "Title, Author, and Year required", nil)
 		return
 	}
 
-	if err := DB.Create(&book).Error; err != nil {
+	if err := DB.Create(&payload).Error; err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to create book", nil)
 		return
 	}
-	ResponseJSON(c, http.StatusCreated, "Book created sucessfully", book)
+	ResponseJSON(c, http.StatusCreated, "Book created sucessfully", payload)
 }
 
 // getting list of books
@@ -84,26 +84,37 @@ func GetBook(c *gin.Context) {
 
 // Update a book
 func UpdateBook(c *gin.Context) {
-	var book Book
-	if err := DB.First(&book, c.Param("id")).Error; err != nil {
+	var existing Book
+	if err := DB.First(&existing, c.Param("id")).Error; err != nil {
 		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
 		return
 	}
 
+	var payload Book
 	//bind the request body
-	if err := c.ShouldBindJSON(&book); err != nil {
+	if err := c.ShouldBindJSON(&payload); err != nil {
 		ResponseJSON(c, http.StatusBadRequest, "Invalid input", nil)
 		return
 	}
 
-	DB.Save(&book)
-	ResponseJSON(c, http.StatusOK, "Book updated successfully", book)
+	existing.Title = payload.Title
+	existing.Author = payload.Author
+	existing.Year = payload.Year
+
+	if err := DB.Save(&existing).Error; err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to update book", nil)
+	}
+	ResponseJSON(c, http.StatusOK, "Book updated successfully", existing)
 }
 
 // delete a book
 func DeleteBook(c *gin.Context) {
-	var book Book
-	if err := DB.Delete(&book, c.Param("id")).Error; err != nil {
+	res := DB.Delete(&Book{}, c.Param("id"))
+	if res.Error != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete book ", nil)
+	}
+
+	if res.RowsAffected == 0 {
 		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
 		return
 	}
@@ -121,6 +132,11 @@ func GenerateJWT(c *gin.Context) {
 		ResponseJSON(c, http.StatusUnauthorized, "Invalid credentials", nil)
 		return
 	}
+	secret, err := getJWTSecret()
+	if err != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Server misconfiguired", nil)
+		return
+	}
 
 	expirationTime := time.Now().Add(15 * time.Minute)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -128,7 +144,7 @@ func GenerateJWT(c *gin.Context) {
 	})
 
 	//sign the token
-	tokenString, err := token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString(secret)
 	if err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Couldn't generate token", nil)
 		return
