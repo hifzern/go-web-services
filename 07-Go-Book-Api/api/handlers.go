@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,16 +24,12 @@ func InitDB() {
 	var err error
 	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatal("Failed to connect to database : ", err)
+		log.Fatal("Failed to connect to database: ", err)
 	}
 
-	//migrate the schema
+	// migrate once (hapus duplikat)
 	if err := DB.AutoMigrate(&Book{}); err != nil {
-		log.Fatal("Failed to migrate schema : ", err)
-	}
-
-	if err := DB.AutoMigrate(&Book{}); err != nil {
-		log.Fatal("Failed to migrate schema : ", err)
+		log.Fatal("Failed to migrate schema: ", err)
 	}
 }
 
@@ -41,17 +38,27 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+// helper validasi id
+func parseID(c *gin.Context) (uint, bool) {
+	idStr := c.Param("id")
+	n, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil || n == 0 {
+		ResponseJSON(c, http.StatusBadRequest, "Invalid id", nil)
+		return 0, false
+	}
+	return uint(n), true
+}
+
 func CreateBook(c *gin.Context) {
 	var payload Book
 
-	//bind the request body
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		ResponseJSON(c, http.StatusBadRequest, "Invalid Input", nil)
+		ResponseJSON(c, http.StatusBadRequest, "Invalid input", nil)
 		return
 	}
 
-	if payload.Title == "" || payload.Author == "" || payload.Year == 0 {
-		ResponseJSON(c, http.StatusBadRequest, "Title, Author, and Year required", nil)
+	if payload.Title == "" || payload.Author == "" || payload.Year <= 0 {
+		ResponseJSON(c, http.StatusBadRequest, "Title, Author, and Year are required", nil)
 		return
 	}
 
@@ -59,41 +66,52 @@ func CreateBook(c *gin.Context) {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to create book", nil)
 		return
 	}
-	ResponseJSON(c, http.StatusCreated, "Book created sucessfully", payload)
+	ResponseJSON(c, http.StatusCreated, "Book created successfully", payload)
 }
 
-// getting list of books
 func GetBooks(c *gin.Context) {
 	var books []Book
 	if err := DB.Find(&books).Error; err != nil {
-		ResponseJSON(c, http.StatusInternalServerError, "Failed to detch books", nil)
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to fetch books", nil)
 		return
 	}
 	ResponseJSON(c, http.StatusOK, "Books retrieved successfully", books)
 }
 
-// get a single book
 func GetBook(c *gin.Context) {
-	var book Book
-	if err := DB.First(&book, c.Param("id")).Error; err != nil {
-		ResponseJSON(c, http.StatusNotFound, "Book Not Found", nil)
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
-	ResponseJSON(c, http.StatusOK, "Book retrieved succesfully", book)
+
+	var book Book
+	if err := DB.First(&book, id).Error; err != nil {
+		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
+		return
+	}
+	ResponseJSON(c, http.StatusOK, "Book retrieved successfully", book)
 }
 
-// Update a book
 func UpdateBook(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+
 	var existing Book
-	if err := DB.First(&existing, c.Param("id")).Error; err != nil {
+	if err := DB.First(&existing, id).Error; err != nil {
 		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
 		return
 	}
 
 	var payload Book
-	//bind the request body
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		ResponseJSON(c, http.StatusBadRequest, "Invalid input", nil)
+		return
+	}
+
+	if payload.Title == "" || payload.Author == "" || payload.Year <= 0 {
+		ResponseJSON(c, http.StatusBadRequest, "Title, Author, and Year are required", nil)
 		return
 	}
 
@@ -103,18 +121,22 @@ func UpdateBook(c *gin.Context) {
 
 	if err := DB.Save(&existing).Error; err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to update book", nil)
+		return
 	}
 	ResponseJSON(c, http.StatusOK, "Book updated successfully", existing)
 }
 
-// delete a book
 func DeleteBook(c *gin.Context) {
-	res := DB.Delete(&Book{}, c.Param("id"))
-	if res.Error != nil {
-		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete book ", nil)
+	id, ok := parseID(c)
+	if !ok {
 		return
 	}
 
+	res := DB.Delete(&Book{}, id)
+	if res.Error != nil {
+		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete book", nil)
+		return
+	}
 	if res.RowsAffected == 0 {
 		ResponseJSON(c, http.StatusNotFound, "Book not found", nil)
 		return
@@ -129,22 +151,30 @@ func GenerateJWT(c *gin.Context) {
 		return
 	}
 
+	// demo sederhana
 	if loginRequest.Username != "admin" || loginRequest.Password != "Password" {
 		ResponseJSON(c, http.StatusUnauthorized, "Invalid credentials", nil)
 		return
 	}
+
 	secret, err := getJWTSecret()
-	if err != nil {
-		ResponseJSON(c, http.StatusInternalServerError, "Server misconfiguired", nil)
+	if err != nil || len(secret) == 0 {
+		ResponseJSON(c, http.StatusInternalServerError, "Server misconfigured", nil)
 		return
 	}
 
-	expirationTime := time.Now().Add(15 * time.Minute)
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"exp": expirationTime.Unix(),
-	})
+	now := time.Now()
+	expirationTime := now.Add(15 * time.Minute)
 
-	//sign the token
+	// tambah claim dasar biar standar
+	claims := jwt.MapClaims{
+		"sub": loginRequest.Username,
+		"iat": now.Unix(),
+		"exp": expirationTime.Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
 	tokenString, err := token.SignedString(secret)
 	if err != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Couldn't generate token", nil)
