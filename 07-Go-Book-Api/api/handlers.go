@@ -112,6 +112,7 @@ func DeleteBook(c *gin.Context) {
 	res := DB.Delete(&Book{}, c.Param("id"))
 	if res.Error != nil {
 		ResponseJSON(c, http.StatusInternalServerError, "Failed to delete book ", nil)
+		return
 	}
 
 	if res.RowsAffected == 0 {
